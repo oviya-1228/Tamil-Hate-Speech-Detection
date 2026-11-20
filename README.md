@@ -1,27 +1,14 @@
-# Guns and Roses @ DravidianCodeMix 2026
+# Tamil Hate Speech Detection | DravidianCodeMix 2026
 
-## A Target-Anchored Contrastive Learning Approach for Hierarchical Hate Speech Detection in Tamil
+### A Hierarchical Multi-Task MuRIL Framework with Back-Translation, Out-of-Fold Hard-Negative Mining and F2-Tuned Thresholds
 
-This repository contains the implementation, Jupyter notebooks, experimental artifacts, and working notes for our submission to the **DravidianCodeMix 2026 Shared Task**, part of FIRE 2026.
+This repository contains the Jupyter Notebook implementation and experimental work developed for our participation in the **DravidianCodeMix 2026 Shared Task on Hate and Hope Speech Detection in Dravidian Languages**.
 
-Our work explores a hybrid approach to Tamil hate speech detection by combining target-anchored supervised contrastive learning with lexical feature-based classification. The proposed system aims to improve the detection of implicit hate speech, which is often difficult to identify using conventional keyword-based or standard classification approaches.
+The project focuses on detecting explicit and implicit hate speech in Tamil social media using a hierarchical multi-task learning framework built on Google's MuRIL Transformer architecture.
 
----
+The approach combines multilingual Transformer fine-tuning, back-translation-based data augmentation, out-of-fold hard-example mining, class-weighted focal loss, and F2-score-based threshold optimization.
 
-## Table of Contents
-
-- [Team](#team)
-- [Problem Statement](#problem-statement)
-- [Proposed Methodology](#proposed-methodology)
-- [Experimental Results](#experimental-results)
-- [Dataset](#dataset)
-- [Repository Structure](#repository-structure)
-- [Technologies and Dependencies](#technologies-and-dependencies)
-- [Installation](#installation)
-- [Reproducing Experiments](#reproducing-experiments)
-- [Limitations and Fairness Analysis](#limitations-and-fairness-analysis)
-- [AI Assistance Disclosure](#ai-assistance-disclosure)
-
+All experiments can be explored and executed using the provided Jupyter Notebook in Google Colab with a T4 GPU runtime.
 
 ---
 
@@ -29,8 +16,10 @@ Our work explores a hybrid approach to Tamil hate speech detection by combining 
 
 **Team Name:** Guns and Roses
 
-- Mohnish Kanna K S
+Team Leader :
 - Oviya T S
+Team Members : 
+- Mohnish Kanna K S
 - Adithiyaa T
 - Sarveash Koushik R V
 
@@ -38,277 +27,270 @@ Our work explores a hybrid approach to Tamil hate speech detection by combining 
 
 ## Problem Statement
 
-Hate speech detection in Tamil social media presents several challenges due to linguistic diversity, code-mixing, transliteration, dialectal variations, and the frequent use of implicit expressions.
+Hate speech detection in Tamil social media is challenging because hateful expressions are frequently conveyed through sarcasm, stereotypes, indirect statements, and contextual references rather than explicit slurs or offensive vocabulary.
 
-Unlike explicit hate speech, implicit hate speech may not contain recognizable slurs or profane language. Instead, it can communicate hostility through context, stereotypes, insinuations, or references to specific target groups.
+The task becomes more difficult due to limited annotated data, code-mixed language, transliterated Tamil, and highly imbalanced fine-grained labels.
 
-Conventional lexical classifiers often struggle with such expressions because they rely heavily on surface-level vocabulary.
+The DravidianCodeMix 2026 Tamil track, *Hierarchical Gender-Aware Tamil Hate Speech Detection*, requires classification across five interconnected levels.
 
-Our approach investigates whether learning representations anchored around the **target group of hateful expressions**, rather than their surface wording alone, can improve implicit hate speech detection.
+| Level | Classification Task |
+|---|---|
+| Level 1 | HATE / NON-HATE |
+| Level 2 | Target Group |
+| Level 3 | EXPLICIT / IMPLICIT |
+| Level 4 | Fine-grained Hate Subcategory |
+| Level 5 | Bias Category |
+
+Our objective was to develop a hierarchical classification system that improves implicit hate detection while maintaining consistency between predictions across different annotation levels.
 
 ---
 
 ## Proposed Methodology
 
-The proposed system consists of four major components.
+### 1. Hierarchical Multi-Task MuRIL Architecture
 
-### 1. MuRIL with Target-Anchored Supervised Contrastive Learning
+The backbone of the system is Google's pretrained `google/muril-base-cased` model.
 
-We use Google's `google/muril-base-cased` as the pretrained Transformer backbone.
+MuRIL (Multilingual Representations for Indian Languages) is a BERT-style Transformer pretrained on Indian languages and English, including transliterated text.
 
-The model is fine-tuned using a target-anchored supervised contrastive learning objective.
+The model uses a shared Transformer encoder followed by five task-specific classification heads.
 
-The objective encourages hateful examples associated with the same target group to develop similar representations, irrespective of whether the expressions are explicit or implicit.
+**Architecture details:**
 
-This encourages the model to capture target-related semantic patterns rather than relying exclusively on recognizable hateful keywords.
+- Pretrained encoder: `google/muril-base-cased`
+- Maximum input length: 128 tokens
+- Sentence representation: Concatenation of the `[CLS]` representation and mean-pooled token representations.
+- Classification heads: Two-layer feed-forward networks.
+- Activation: GELU
+- Dropout: 0.2
 
-The architecture also incorporates classification heads for the hierarchical prediction tasks.
+Lower-level classification heads are conditioned on predictions from higher levels. Constrained decoding ensures that the final predictions follow the hierarchical label structure.
 
-### 2. Lexical Feature-Based Classification
+### 2. Hierarchical Label Processing and Multi-Task Learning
 
-To complement contextual representations learned by MuRIL, we introduce a lexical classification pipeline using:
+The dataset contains missing annotations at certain hierarchical levels.
 
-- Character-level TF-IDF features.
-- Word-level TF-IDF features.
-- LightGBM classification.
+Instead of treating missing annotations as an additional class, per-level loss masks are used to exclude missing labels from the corresponding loss calculations.
 
-This component aims to capture lexical variations, slang, transliterated expressions, and dialectal spellings that may not be adequately represented by the Transformer model.
+The overall training objective combines five classification losses using weighted focal cross-entropy.
 
-### 3. Probability Calibration and Ensemble Learning
+Training configurations include:
 
-The predictions from the Transformer and lexical models are combined through a calibrated ensemble pipeline.
+- Focal loss parameter: γ = 1
+- Label smoothing: 0.05
+- Inverse-frequency-based class weighting
+- Per-level loss weighting
+- Separate classification heads for all five levels
 
-The process involves:
+### 3. NLLB-200 Back-Translation
 
-- **Isotonic Regression:** Calibrates model probability estimates.
-- **Logistic Regression Stacking:** Combines predictions from the individual models through a meta-classifier.
-- **Threshold Optimization:** Selects decision thresholds based on validation performance.
+To increase training diversity and improve generalization, we use the distilled 600M-parameter NLLB-200 translation model.
 
-The final system combines contextual and lexical information to improve classification performance.
+Tamil sentences are translated into a pivot language and then translated back into Tamil.
 
-### 4. Three-Tier Moderation Triage
+The augmentation strategy uses:
 
-Instead of producing only binary predictions, the system incorporates a three-tier decision mechanism:
+- Tamil → English → Tamil
+- Tamil → Hindi → Tamil
 
-- **Auto-Flag:** Automatically flags likely hateful content.
-- **Auto-Clear:** Automatically clears likely non-hateful content.
-- **Human Review:** Sends uncertain predictions for manual assessment.
+Implicit-hate examples and minority-class examples receive additional augmentation.
 
-This approach is intended to support practical content moderation workflows where uncertain cases should not necessarily receive automatic decisions.
+**Augmentation statistics:**
 
----
+| Description | Count |
+|---|---:|
+| Total translation jobs | 3,310 |
+| English pivot translations | 2,323 |
+| Hindi pivot translations | 987 |
+| Retained paraphrases | 2,782 |
+| Original training sentences | 2,968 |
+| Final augmented training rows | 5,750 |
 
-## Experimental Results
+Filtering is applied to remove unsuitable paraphrases, including duplicates, empty outputs, excessive length differences, insufficient Tamil-script content, and extreme character-level similarity.
 
-### Level-1 Classification Results
+Data splitting is performed before augmentation to prevent validation and test data leakage.
 
-The following table summarizes the experimental configurations evaluated during development.
+### 4. Out-of-Fold Hard-Negative Mining
 
-| Configuration | Accuracy | HATE F1 | NON-HATE F1 | Implicit Recall |
-|---|---:|---:|---:|---:|
-| MuRIL Level-1 Baseline | 0.83 | 0.84 | 0.81 | ~0.00 |
-| Contrastive MuRIL | 0.79 | 0.78 | 0.80 | 0.68 |
-| F1-Optimal Threshold | 0.75 | 0.79 | 0.69 | 0.86 |
-| Isotonic Calibration | 0.78 | 0.80 | 0.76 | 0.78 |
-| **Final Lexical Ensemble** | **0.79** | **0.81** | **0.77** | **0.78** |
+We incorporate out-of-fold (OOF) prediction-based hard-example mining to identify difficult training examples.
 
-The baseline achieved higher overall accuracy but exhibited a significant weakness in detecting implicit hate speech. Its implicit hate recall was approximately zero.
+The training dataset is divided into three stratified folds. For each fold, a model is trained on the other two folds and generates predictions for the held-out fold.
 
-The contrastive learning approach substantially improved implicit hate detection, demonstrating the importance of target-aware representation learning for this task.
+The mining strategy identifies:
 
-The final ensemble achieved a HATE F1-score of 0.81 and implicit hate recall of 0.78.
+- **Hard negatives:** NON-HATE examples with high predicted hate probabilities.
+- **Hard positives:** HATE examples with low predicted hate probabilities.
 
-### Hierarchical Classification Results
+Selected hard examples and their paraphrases receive an increased sample weight of 2.0 during the second training stage.
 
-| Level | Classification Task | Metric | Score |
-|---|---|---|---:|
-| Level 1 | HATE / NON-HATE | Weighted F1 | 0.79 |
-| Level 2 | Target Group | Macro F1 | 0.27 |
-| Level 3 | EXPLICIT / IMPLICIT | Macro F1 | 0.70 |
-| Level 5 | Bias Category | Macro F1 | 0.15 |
+Strong disagreements between model predictions and ground-truth labels are also recorded for manual inspection to identify potential annotation errors.
 
-**Note:** Level 3 evaluation considers only true-HATE examples. Level 4 was not modeled separately due to extreme class sparsity.
+### 5. F2-Tuned Thresholds and Constrained Decoding
 
-The target-group and bias-category classification tasks remain challenging because of limited training examples and class imbalance.
+The default classification threshold of 0.5 may not be suitable when recall is particularly important.
+
+We optimize decision thresholds using validation data.
+
+For Level 1, the threshold is selected to maximize the F2-score of the HATE class, giving greater importance to recall than precision.
+
+For Levels 2–5, class-specific offsets are optimized using coordinate ascent to improve macro-F2.
+
+Constrained decoding ensures that predictions remain consistent with the hierarchical label structure.
 
 ---
 
 ## Dataset
 
-The experiments use the Tamil social-media hate speech dataset provided for the DravidianCodeMix 2026 Shared Task.
+The experiments use the Tamil training dataset released for the DravidianCodeMix 2026 Shared Task.
 
-**Dataset statistics:**
-
-- Total cleaned sentences: 4,246
-- Language: Tamil
-- Domain: Social media
-- Train/Validation/Test split: 70% / 15% / 15%
-- Split strategy: Stratified using Level-1 and Level-3 labels
-
-The dataset follows a five-level hierarchical annotation structure:
-
-1. **Level 1:** HATE / NON-HATE
-2. **Level 2:** Target Group
-3. **Level 3:** EXPLICIT / IMPLICIT
-4. **Level 4:** Fine-Grained Subcategory
-5. **Level 5:** Bias Category
-
-The dataset is not redistributed in this repository. Researchers should obtain it through the official DravidianCodeMix 2026 Shared Task release.
-
----
-
-## Repository Structure
-
-```text
-.
-├── notebooks/
-│   ├── 01_data_cleaning.ipynb
-│   ├── 02_baseline_diagnostic.ipynb
-│   ├── 03_contrastive_training.ipynb
-│   ├── 04_lexical_ensemble.ipynb
-│   ├── 05_calibration_and_stacking.ipynb
-│   ├── 06_triage_and_error_analysis.ipynb
-│   └── 07_fairness_check.ipynb
-│
-├── src/
-│   ├── data.py
-│   ├── model.py
-│   ├── ensemble.py
-│   └── triage.py
-│
-├── artifacts/
-│   └── final_artifacts_v2.pkl
-│
-├── paper/
-│   └── working_notes_paper.docx
-│
-├── requirements.txt
-└── README.md
-```
-
-**Notebook descriptions:**
-
-| Notebook | Description |
+| Attribute | Details |
 |---|---|
-| `01_data_cleaning.ipynb` | Dataset cleaning and preprocessing |
-| `02_baseline_diagnostic.ipynb` | Baseline MuRIL model and diagnostic evaluation |
-| `03_contrastive_training.ipynb` | Target-anchored contrastive learning and model training |
-| `04_lexical_ensemble.ipynb` | TF-IDF feature extraction and LightGBM training |
-| `05_calibration_and_stacking.ipynb` | Probability calibration and ensemble stacking |
-| `06_triage_and_error_analysis.ipynb` | Three-tier moderation and error analysis |
-| `07_fairness_check.ipynb` | False-positive analysis across keyword groups |
+| Language | Tamil |
+| Domain | Social media |
+| Original sentences | 4,255 |
+| Cleaned sentences | 4,240 |
+| HATE | 2,228 |
+| NON-HATE | 2,012 |
+| Training samples | 2,968 |
+| Validation samples | 636 |
+| Test samples | 636 |
+| Split | 70% / 15% / 15% |
+
+### Data Preprocessing
+
+The preprocessing pipeline includes:
+
+- Removal of missing Level-1 labels.
+- Removal of exact duplicates and conflicting labels.
+- Unicode NFC normalization.
+- URL removal.
+- Replacement of user mentions with placeholders.
+- Normalization of excessively repeated characters.
+- Merging of extremely sparse fine-grained categories.
+- Per-level missing-label handling.
+
+The dataset is stratified using Level-1 labels combined with Level-2 target groups.
 
 ---
 
-## Technologies and Dependencies
+## Experimental Results
 
-The project uses the following technologies:
+Experiments were conducted using a single NVIDIA T4 GPU through Google Colab with mixed-precision FP16 training.
 
-| Category | Technologies |
-|---|---|
-| Programming Language | Python |
-| Deep Learning Framework | PyTorch |
-| Transformer Models | Hugging Face Transformers, MuRIL |
-| Machine Learning | Scikit-learn, LightGBM |
-| Feature Extraction | TF-IDF |
-| Data Processing | Pandas, NumPy |
-| Experimentation | Jupyter Notebook |
+The model uses AdamW optimization, weight decay, linear learning-rate warm-up, and linear learning-rate decay.
 
-**Key dependencies:**
+### 1. Level-1 Hate Speech Classification
 
-```text
-torch
-transformers
-lightgbm
-scikit-learn
-pandas
-numpy
-jupyter
-```
+| Model | Threshold | Macro F1 | Hate Recall | Hate F2 | Implicit Recall |
+|---|---:|---:|---:|---:|---:|
+| Stage 1 | 0.50 | 0.798 | 0.817 | 0.814 | 0.726 |
+| Stage 1 | 0.06 | 0.759 | 0.910 | 0.865 | 0.863 |
+| Stage 2 | 0.50 | 0.792 | 0.838 | 0.827 | 0.760 |
+| Stage 2 | F2-tuned | 0.771 | 0.895 | 0.858 | 0.851 |
 
----
+The Stage-1 model at the default threshold achieves:
 
-## Installation
+- Accuracy: 0.80
+- Macro F1: 0.80
 
-Clone the repository:
+With F2-based threshold optimization, hate recall increases from approximately 0.82 to 0.91, while implicit hate recall increases from approximately 0.73 to 0.86.
 
-```bash
-git clone https://github.com/mohnish1234-git/pdfhtml.git
-cd pdfhtml
-```
+This improvement comes at the cost of increased false positives and reduced overall accuracy.
 
-Create and activate a virtual environment:
+### 2. Hierarchical Classification Results
 
-```bash
-python -m venv venv
-```
+| Level | Classification Task | Default Oracle Macro F1 | F2 Oracle Macro F1 | End-to-End Macro F1 |
+|---|---|---:|---:|---:|
+| Level 2 | Target Group | 0.628 | 0.610 | 0.603 |
+| Level 3 | Explicit / Implicit | 0.742 | 0.727 | — |
+| Level 4 | Subcategory (24 classes) | 0.172 | 0.161 | 0.152 |
+| Level 4 | Abuse Type (16 classes) | 0.198 | 0.194 | — |
+| Level 5 | Bias Type | 0.375 | 0.389 | — |
 
-On Windows:
+Oracle scores evaluate lower-level classification on true HATE examples, while end-to-end scores also account for errors at Level 1.
 
-```bash
-venv\Scripts\activate
-```
+### 3. Baseline Comparison
 
-On Linux/macOS:
+| Level | Metric | Initial Baseline | Proposed System |
+|---|---|---:|---:|
+| Level 1 | Accuracy | 0.80 | 0.80 |
+| Level 2 | Macro F1 | 0.12 | 0.63 |
+| Level 3 | Macro F1 | 0.47 | 0.74 |
+| Level 4 | Macro F1 | 0.02 | 0.17 |
+| Level 5 | Macro F1 | 0.15 | 0.38 |
 
-```bash
-source venv/bin/activate
-```
-
-Install the dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-For GPU-based training, ensure that the installed PyTorch version is compatible with your CUDA environment.
+The hierarchical architecture significantly improves lower-level classification compared with the initial baseline.
 
 ---
 
-## Reproducing Experiments
+## Repository Contents
 
-The notebook - Trial5-NLLB contains the full code.
+The repository contains the Jupyter Notebook used for data preprocessing, model training, augmentation, evaluation, and experimentation.
+
+The notebook can be downloaded directly from the repository and executed in Google Colab.
+
 ---
 
-## Limitations and Fairness Analysis
+## How to Run the Project
 
-Although the proposed approach improves implicit hate detection, several limitations were identified.
+The experiments are designed to run in **Google Colab with a T4 GPU runtime**.
 
-### 1. Target Group Classification
+### Step 1: Download the Notebook
 
-The Level-2 target-group classification task achieved a macro F1-score of 0.27, indicating difficulty in distinguishing between target categories.
+Open the repository and navigate to the Jupyter Notebook (`.ipynb`) containing the implementation.
 
-### 2. Bias Category Classification
+Download the notebook to your local system.
 
-The Level-5 bias category task achieved a macro F1-score of 0.15. Limited examples and class sparsity significantly affect fine-grained classification.
+### Step 2: Open Google Colab
 
-### 3. Fairness Evaluation
+Visit [Google Colab](https://colab.research.google.com/).
 
-We examined false-positive rates among true NON-HATE examples based on the presence of target-group vocabulary.
+Select:
 
-| Group | False Positive Rate | Sample Count |
-|---|---:|---:|
-| Contains target-group vocabulary | 0.620 | 50 |
-| Does not contain target-group vocabulary | 0.488 | 252 |
+`File → Upload Notebook`
 
-The observed difference highlights a potential bias in predictions involving target-group vocabulary.
+Upload the downloaded `.ipynb` file.
 
-This finding emphasizes the importance of evaluating hate speech detection systems beyond aggregate classification metrics.
-We also didnt get the results of our model's performance on the test data.
+### Step 3: Enable GPU Runtime
+
+In Google Colab:
+
+1. Open Runtime.
+2. Select Change runtime type.
+3. Set Hardware accelerator to GPU.
+4. Select T4 GPU, if available.
+5. Save the configuration.
+
+### Step 4: Execute the Notebook
+
+Run the notebook cells sequentially.
+
+The notebook handles the required preprocessing, model initialization, training, evaluation, and experimentation.
+
+Make sure the required dataset files are available at the locations specified in the notebook.
+
+**Note:** Training and NLLB-200 back-translation can take considerable time and GPU resources. Runtime availability and execution time depend on Google Colab's resource limits.
+
 ---
 
-## AI Assistance Disclosure
+## Limitations
 
-In accordance with the DravidianCodeMix 2026 Shared Task AI assistance policy, Claude (Anthropic) was used as a code-writing assistant for the model architecture, training pipeline, and evaluation scripts.
+Some limitations identified during experimentation include:
 
-It was also consulted during research framing and experimental design, including the diagnosis of implicit hate detection failures and the development of the target-anchored contrastive learning objective.
+- The experiments were conducted using a single random seed.
+- The independent contribution of back-translation has not been established through a dedicated ablation.
+- The F2-optimized threshold indicates potential probability calibration issues.
+- Fine-grained categories suffer from class imbalance and limited training examples.
+- Recall-oriented thresholding increases false-positive predictions.
+- The dataset contains relatively few entirely romanized Tamil examples.
 
-All reported results were independently generated by executing the resulting code on the dataset described in the paper.
+These limitations highlight opportunities for further experimentation and improvement.
 
-The analysis, interpretation, and final writing are the authors' own.
+---
 
+## Team
 
+**Guns and Roses | DravidianCodeMix 2026**
 
-**Guns and Roses @ DravidianCodeMix 2026**
+Developed as part of our participation in the DravidianCodeMix 2026 Shared Task on Hate and Hope Speech Detection in Dravidian Languages.
 
-*Exploring target-aware representation learning for more robust Tamil hate speech detection.*
